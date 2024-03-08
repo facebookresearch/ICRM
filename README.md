@@ -1,4 +1,7 @@
 # Context is Environment
+By Sharut Gupta, Stefanie Jegelka, David Lopez-Paz, Kartik Ahuja
+
+[[arXiv](https://arxiv.org/abs/2309.09888)]
 
 Two lines of work are taking center stage in AI research. On the one hand, the community is making increasing efforts to build models that discard spurious correlations and generalize better in novel test environments. Unfortunately, a hard lesson so far is that no proposal convincingly outperforms a simple empirical risk minimization baseline. On the other hand, large language models (LLMs) have erupted as algorithms able to learn _in-context_, generalizing on-the-fly to the eclectic contextual circumstances that users enforce by prompting. We argue that _context is environment_, and posit that in-context learning holds the key to better domain generalization. Via extensive theory and experiments, we show that paying attention to context---unlabeled examples as they arrive---allows our proposed In-Context Risk Minimization (ICRM) algorithm to _zoom-in_ on the test environment risk minimizer, leading to significant out-of-distribution performance improvements. From all of this, two messages are worth taking home: researchers in domain generalization should consider _environment as context_, and harness the adaptive power of in-context learning. Researchers in LLMs should consider _context as environment_, to better structure data towards generalization.
 
@@ -42,8 +45,13 @@ Rotated MNIST can be downloaded using torch itself, while WILDS Camelyon is down
 The [currently available algorithms](d./algorithms.py) are:
 * Empirical Risk Minimization (ERM, [Vapnik, 1998](https://www.wiley.com/en-fr/Statistical+Learning+Theory-p-9780471030034))
 * Adaptive Risk Minimization (ARM, [Zhang et al., 2020](https://arxiv.org/abs/2007.02931))
-* Test-time Adaptation by Entropy Minimization (TENT, [Wang., 2021](https://openreview.net/pdf?id=uXl3bZLkr3c))
+* Test-time Adaptation by Entropy Minimization (TENT, [Wang et al., 2021](https://openreview.net/pdf?id=uXl3bZLkr3c))
 * In-Context Risk Minimization (ICRM)
+* Gradient Matching for Domain Generalization (Fish, [Shi et al., 2021](https://arxiv.org/pdf/2104.09937.pdf))
+* Interdomain Mixup (Mixup, [Yan et al., 2020](https://arxiv.org/abs/2001.00677))
+* Invariance Principle Meets Information Bottleneck for Out-of-Distribution Generalization (IB-ERM , [Ahuja et al., 2021](https://arxiv.org/abs/2106.06607))
+* Invariance Principle Meets Information Bottleneck for Out-of-Distribution Generalization (IB-IRM, [Ahuja et al., 2021](https://arxiv.org/abs/2106.06607))
+
 
 ## Available datasets
 The [currently available datasets](./datasets.py) are:
