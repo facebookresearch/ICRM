@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.import os
 
+import os
 import sys
 import time
 import argparse
@@ -158,7 +159,7 @@ if __name__ == "__main__":
     algorithm_class = algorithms.get_algorithm_class(args.algorithm)
     algorithm = algorithm_class(dataset.input_shape, dataset.num_classes, hparams)
               
-    
+    # Resume run
     if os.path.exists(os.path.join(args.output_dir, 'models', 'checkpoint.pth.tar')):
         ckpt = utils.load_checkpoint(os.path.join(args.output_dir, 'models'), epoch = None)   
         algorithm.load_state_dict(ckpt['state_dict'])

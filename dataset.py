@@ -29,7 +29,7 @@ import random
 logging.basicConfig(level=logging.INFO)
 
 
-DATASETS = ['FEMNIST', 'RareGroupRotatedMNIST', 'TinyImagenet', 'WILDSCamelyon', 'WILDSFMoW', 'PACS', 'TerraIncognita', 'DomainNet', 'ColoredMNIST', 'WILDSWaterbirds']
+DATASETS = ['FEMNIST', 'RareGroupRotatedMNIST', 'TinyImagenet', 'WILDSCamelyon']
 
 def get_dataset_class(dataset_name):
     """Return the dataset class with the given name."""

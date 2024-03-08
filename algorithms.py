@@ -10,9 +10,12 @@ import torch
 import utils
 import copy
 import networks
+import numpy as np
+import torch.nn.functional as F
+import torch.autograd as autograd
 
 
-ALGORITHMS = ['ERM', 'ICRM', 'ARM_CML', 'TENT']
+ALGORITHMS = ['ERM', 'ICRM', 'ARM_CML', 'TENT', 'Mixup', 'Fish', 'IB_ERM', 'IB_IRM']
 
 def get_algorithm_class(algorithm_name):
     """Return the algorithm class with the given name."""
@@ -137,6 +140,7 @@ class ERM(Algorithm):
 class TENT(ERM):
     """Tent: Fully Test-Time Adaptation by Entropy Minimization"""
     def __init__(self, input_shape, num_classes, hparams):
+        # Make sure to load weights of a trained ERM model before fine-tuning it with TENT
         super().__init__(input_shape, num_classes, hparams)
         self.n_steps = hparams.get('n_steps', 10)
         self.episodic = hparams.get('episodic', 1)
@@ -280,8 +284,8 @@ class ICRM(ERM):
                                   hparams)
                 
     def predict(self, x, y, return_context = False, past_key_values = None): 
-        if x.ndim == 4:                                                      
-            bs, c, h, w = x.size()
+        if x.ndim == 4:                                                             # Splits a batch into multiple sequences with length as the context length                                    
+            bs, c, h, w = x.size()                          
             bs, ctxt = bs // self.context_len, self.context_len
             y = y.reshape(bs, ctxt)
         elif x.ndim == 5:   
@@ -297,7 +301,7 @@ class ICRM(ERM):
         if return_context:  return p, past
         else:   return p.view(-1, p.size(-1))
     
-    def repeat_past_key_values(self, past_key_values, repeats):
+    def repeat_past_key_values(self, past_key_values, repeats):                     # process key value cache for computing fast inference
         repeated_past_key_values = []
         for layer_past in past_key_values:
             repeated_layer_past = []
@@ -425,3 +429,164 @@ class ARM_CML(ERM):
         return result 
 
  
+
+class Mixup(ERM):
+    """
+    Mixup of minibatches from different domains
+    https://arxiv.org/pdf/2001.00677.pdf
+    https://arxiv.org/pdf/1912.01805.pdf
+    """
+    def __init__(self, input_shape, num_classes, hparams):
+        super(Mixup, self).__init__(input_shape, num_classes,
+                                    hparams)
+
+    def update(self, minibatches, unlabeled=None):
+        self.network.train()
+        objective = 0
+        for (xi, yi), (xj, yj) in utils.random_pairs_of_minibatches(minibatches):
+            lam = np.random.beta(self.hparams["mixup_alpha"], self.hparams["mixup_alpha"])
+
+            x = lam * xi + (1 - lam) * xj
+            predictions = self.predict(x)
+            objective += lam * F.cross_entropy(predictions, yi)
+            objective += (1 - lam) * F.cross_entropy(predictions, yj)
+
+        objective /= len(minibatches)
+
+        self.optimizer.zero_grad()
+        objective.backward()
+        self.optimizer.step()
+
+        return {'train_loss': objective.item()}
+    
+
+class IB_ERM(ERM):
+    """Information Bottleneck based ERM on feature with conditionning"""
+
+    def __init__(self, input_shape, num_classes, hparams):
+        super(IB_ERM, self).__init__(input_shape, num_classes, hparams)
+        self.optimizer = utils.extract_optimizer(self.hparams['optimizer_name'], list(self.featurizer.parameters()) + list(self.classifier.parameters()), lr=self.hparams["lr"], weight_decay=self.hparams['weight_decay'])
+        self.register_buffer('update_count', torch.tensor([0]))
+        
+    @property
+    def ib_penalty_weight(self):
+        return self.hparams['ib_lambda'] if self.update_count >= self.hparams['ib_penalty_anneal_iters'] else 0.0
+
+    def update(self, minibatches, unlabeled=None):
+        self.network.train()
+
+        all_x = torch.cat([x for x, y in minibatches])
+        all_features = self.featurizer(all_x)
+        all_logits = self.classifier(all_features)
+        features_list = torch.split(all_features, [x.shape[0] for x, y in minibatches])
+        logits_list = torch.split(all_logits, [x.shape[0] for x, y in minibatches])
+        
+        nll = torch.mean(torch.stack([F.cross_entropy(logits, y) for logits, (x, y) in zip(logits_list, minibatches)]))
+        ib_penalty = torch.mean(torch.stack([features.var(dim=0).mean() for features in features_list]))
+        loss = nll + self.ib_penalty_weight * ib_penalty
+        
+        if self.update_count == self.hparams['ib_penalty_anneal_iters']:
+            self.optimizer = utils.extract_optimizer(self.hparams['optimizer_name'], list(self.featurizer.parameters()) + list(self.classifier.parameters()), lr=self.hparams["lr"], weight_decay=self.hparams['weight_decay'])
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        self.update_count += 1
+        return {'train_loss': loss.item(), 'nll': nll.item(), 'IB_penalty': ib_penalty.item()}
+       
+              
+class IB_IRM(ERM):
+    """Information Bottleneck based IRM on feature with conditionning"""
+
+    def __init__(self, input_shape, num_classes, hparams):
+        super(IB_IRM, self).__init__(input_shape, num_classes,
+                                  hparams)
+        self.optimizer = utils.extract_optimizer(self.hparams['optimizer_name'], list(self.featurizer.parameters()) + list(self.classifier.parameters()), lr=self.hparams["lr"], weight_decay=self.hparams['weight_decay'])
+        self.register_buffer('update_count', torch.tensor([0]))
+
+    @staticmethod
+    def _irm_penalty(logits, y):
+        device = "cuda" if logits[0][0].is_cuda else "cpu"
+        scale = torch.tensor(1., device=device, requires_grad=True)
+        loss_1 = F.cross_entropy(logits[::2] * scale, y[::2])
+        loss_2 = F.cross_entropy(logits[1::2] * scale, y[1::2])
+        grad_1 = autograd.grad(loss_1, [scale], create_graph=True)[0]
+        grad_2 = autograd.grad(loss_2, [scale], create_graph=True)[0]
+        return torch.sum(grad_1 * grad_2)
+
+    @property
+    def irm_penalty_weight(self):
+        return self.hparams['irm_lambda'] if self.update_count >= self.hparams['irm_penalty_anneal_iters'] else 1.0
+
+    @property
+    def ib_penalty_weight(self):
+        return self.hparams['ib_lambda'] if self.update_count >= self.hparams['ib_penalty_anneal_iters'] else 0.0
+
+    def update(self, minibatches, unlabeled=None):
+        self.network.train()
+        all_x = torch.cat([x for x, y in minibatches])
+        all_features = self.featurizer(all_x)
+        all_logits = self.classifier(all_features)
+        features_list = torch.split(all_features, [x.shape[0] for x, y in minibatches])
+        logits_list = torch.split(all_logits, [x.shape[0] for x, y in minibatches])
+
+        nll = torch.mean(torch.stack([F.cross_entropy(logits, y) for logits, (x, y) in zip(logits_list, minibatches)]))
+        irm_penalty = torch.mean(torch.stack([self._irm_penalty(logits, y) for logits, (x, y) in zip(logits_list, minibatches)]))
+        ib_penalty = torch.mean(torch.stack([features.var(dim=0).mean() for features in features_list]))
+
+        loss = nll + self.irm_penalty_weight * irm_penalty + self.ib_penalty_weight * ib_penalty
+
+        if self.update_count == self.hparams['irm_penalty_anneal_iters'] or self.update_count == self.hparams['ib_penalty_anneal_iters']:
+            self.optimizer = utils.extract_optimizer(self.hparams['optimizer_name'], list(self.featurizer.parameters()) + list(self.classifier.parameters()), lr=self.hparams["lr"], weight_decay=self.hparams['weight_decay'])
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        self.update_count += 1
+        return {'train_loss': loss.item(), 'nll': nll.item(), 'IRM_penalty': irm_penalty.item(), 'IB_penalty': ib_penalty.item()}
+    
+
+class Fish(ERM):
+    """
+    Implementation of Fish, as seen in Gradient Matching for Domain
+    Generalization, Shi et al. 2021.
+    """
+
+    def __init__(self, input_shape, num_classes, hparams):
+        super(Fish, self).__init__(input_shape, num_classes,
+                                   hparams)
+        self.input_shape = input_shape
+        self.num_classes = num_classes
+
+        self.network = networks.WholeFish(input_shape, num_classes, hparams)
+        self.optimizer = utils.extract_optimizer(self.hparams['optimizer_name'], self.network.parameters(), lr=self.hparams["lr"],weight_decay=self.hparams['weight_decay'])
+        self.optimizer_inner_state = None
+
+    def create_clone(self, device):
+        self.network_inner = networks.WholeFish(self.input_shape, self.num_classes, self.hparams, weights=self.network.state_dict()).to(device)
+        self.optimizer_inner = utils.extract_optimizer(self.hparams['optimizer_name'],self.network_inner.parameters(),lr=self.hparams["lr"],weight_decay=self.hparams['weight_decay'])
+        if self.optimizer_inner_state is not None:
+            self.optimizer_inner.load_state_dict(self.optimizer_inner_state)
+
+    def fish(self, meta_weights, inner_weights, lr_meta):
+        meta_weights = utils.ParamDict(meta_weights)
+        inner_weights = utils.ParamDict(inner_weights)
+        meta_weights += lr_meta * (inner_weights - meta_weights)
+        return meta_weights
+
+    def update(self, minibatches, unlabeled=None):
+        self.network.train()
+        self.create_clone(minibatches[0][0].device)
+        for x, y in minibatches:
+            loss = F.cross_entropy(self.network_inner(x), y)
+            self.optimizer_inner.zero_grad()
+            loss.backward()
+            self.optimizer_inner.step()
+
+        self.optimizer_inner_state = self.optimizer_inner.state_dict()
+        meta_weights = self.fish(meta_weights=self.network.state_dict(),inner_weights=self.network_inner.state_dict(),lr_meta=self.hparams["meta_lr"])
+        self.network.reset_weights(meta_weights)
+
+        return {'train_loss': loss.item()}
