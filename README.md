@@ -1,13 +1,20 @@
 # Context is Environment
 By Sharut Gupta, Stefanie Jegelka, David Lopez-Paz, Kartik Ahuja
 
-[[arXiv](https://arxiv.org/abs/2309.09888)]
+[[Read the full paper on arXiv](https://arxiv.org/abs/2309.09888)]
 
 Two lines of work are taking center stage in AI research. On the one hand, the community is making increasing efforts to build models that discard spurious correlations and generalize better in novel test environments. Unfortunately, a hard lesson so far is that no proposal convincingly outperforms a simple empirical risk minimization baseline. On the other hand, large language models (LLMs) have erupted as algorithms able to learn _in-context_, generalizing on-the-fly to the eclectic contextual circumstances that users enforce by prompting. We argue that _context is environment_, and posit that in-context learning holds the key to better domain generalization. Via extensive theory and experiments, we show that paying attention to context---unlabeled examples as they arrive---allows our proposed In-Context Risk Minimization (ICRM) algorithm to _zoom-in_ on the test environment risk minimizer, leading to significant out-of-distribution performance improvements. From all of this, two messages are worth taking home: researchers in domain generalization should consider _environment as context_, and harness the adaptive power of in-context learning. Researchers in LLMs should consider _context as environment_, to better structure data towards generalization.
 
 <p align='center'>
 <img src='./figures/mainfig.png' width='1000'/>
 </p>
+
+The key contributions of this work include: 
+- Establishing a strong parallel between the concept of _environment_ in domain generalization, and the concept of _context_ in next-token prediction
+- Introducing In-Context Risk Minimization (ICRM), a novel algorithm that learns in-context about environmental features by paying attention to unlabeled instances (context) as they arrive
+- Theoretically prove that such in-context learners can amortize context to zoom-in on the empirical risk minimizer of the test environment, achieving competitive out-of-distribution performance
+- Demonstrating that in several settings, ICRM learns invariances in the extended input-context feature space that ERM-based algorithms ignore
+- Empirically demonstrating the efficacy of ICRM and provide extensive ablations that dissect and deepen our understanding of it.
 
 ## ICRM: In-Context Risk Minimization
 
